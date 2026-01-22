@@ -1,0 +1,8 @@
+{
+  "path": "COM8",
+  "baud": 9600,
+  "dtr": 0,
+  "rts": 0,
+  "rigaddr": "94",
+  "ctrladdr": "E0"
+}
