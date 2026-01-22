@@ -1,127 +1,60 @@
-import readline from "node:readline";
-
-const ESC = "\u001b[";
-
-function moveCursor(row, col) {
-  process.stdout.write(`${ESC}${row};${col}H`);
-}
-
-function clearLine() {
-  process.stdout.write(`${ESC}2K`);
-}
-
+/**
+ * Bottom-line input using stdin raw mode.
+ */
 export function startInput({ term, onCommand }) {
-  let buffer = "";
-  let cursor = 0;
-  let stopped = false;
   const prompt = "> ";
-
-  readline.emitKeypressEvents(process.stdin);
-  if (process.stdin.isTTY) {
-    process.stdin.setRawMode(true);
-  }
-  process.stdin.resume();
-  process.stdin.setEncoding("utf8");
+  let buf = "";
+  let active = true;
 
   function render() {
-    if (stopped) return;
-    const rows = process.stdout.rows || 24;
-    const col = prompt.length + cursor + 1;
-    moveCursor(rows, 1);
-    clearLine();
-    process.stdout.write(`${prompt}${buffer}`);
-    moveCursor(rows, Math.max(col, 1));
+    term.renderInput(prompt, buf);
   }
 
-  function insertText(text) {
-    if (!text) return;
-    buffer = `${buffer.slice(0, cursor)}${text}${buffer.slice(cursor)}`;
-    cursor += text.length;
+  function stop() {
+    active = false;
+    try { process.stdin.setRawMode(false); } catch {}
+    process.stdin.pause();
   }
 
-  function handleBackspace() {
-    if (cursor <= 0) return;
-    buffer = `${buffer.slice(0, cursor - 1)}${buffer.slice(cursor)}`;
-    cursor -= 1;
-  }
+  process.stdin.setEncoding("utf8");
+  process.stdin.resume();
+  process.stdin.setRawMode(true);
 
-  function handleDelete() {
-    if (cursor >= buffer.length) return;
-    buffer = `${buffer.slice(0, cursor)}${buffer.slice(cursor + 1)}`;
-  }
+  const onData = (chunk) => {
+    if (!active) return;
 
-  function handleKeypress(str, key) {
-    if (!key) return;
-    if (key.ctrl && key.name === "c") {
-      term.exit?.();
-      process.exit(0);
-    }
-
-    if (key.name === "return") {
-      const line = buffer.trim();
-      buffer = "";
-      cursor = 0;
-      render();
-      if (line) onCommand(line);
+    // Ctrl+C
+    if (chunk === "\u0003") {
+      onCommand?.("quit");
       return;
     }
 
-    switch (key.name) {
-      case "left":
-        cursor = Math.max(0, cursor - 1);
-        render();
-        return;
-      case "right":
-        cursor = Math.min(buffer.length, cursor + 1);
-        render();
-        return;
-      case "home":
-        cursor = 0;
-        render();
-        return;
-      case "end":
-        cursor = buffer.length;
-        render();
-        return;
-      case "backspace":
-        handleBackspace();
-        render();
-        return;
-      case "delete":
-        handleDelete();
-        render();
-        return;
-      case "u":
-        if (key.ctrl) {
-          buffer = "";
-          cursor = 0;
-          render();
-          return;
-        }
-        break;
-      default:
-        break;
-    }
-
-    if (!key.ctrl && !key.meta && str) {
-      insertText(str);
+    // Enter
+    if (chunk === "\r" || chunk === "\n") {
+      const line = buf.trim();
+      buf = "";
       render();
+      if (line) onCommand?.(line);
+      return;
     }
-  }
 
-  process.stdin.on("keypress", handleKeypress);
+    // Backspace
+    if (chunk === "\u007f") {
+      if (buf.length > 0) buf = buf.slice(0, -1);
+      render();
+      return;
+    }
 
+    // Ignore escape sequences (arrows, etc.)
+    if (chunk.startsWith("\u001b")) return;
+
+    // Printable
+    buf += chunk;
+    render();
+  };
+
+  process.stdin.on("data", onData);
   render();
 
-  return {
-    render,
-    stop() {
-      if (stopped) return;
-      stopped = true;
-      process.stdin.off("keypress", handleKeypress);
-      if (process.stdin.isTTY) {
-        process.stdin.setRawMode(false);
-      }
-    },
-  };
+  return { render, stop };
 }

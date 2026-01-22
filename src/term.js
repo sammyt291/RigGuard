@@ -1,70 +1,71 @@
-const ESC = "\u001b[";
+import ansiEscapes from "ansi-escapes";
 
-function write(value) {
-  process.stdout.write(value);
-}
-
-function cursorTo(row, col) {
-  write(`${ESC}${row};${col}H`);
-}
-
-function clearLine() {
-  write(`${ESC}2K`);
-}
-
-function setScrollRegion(top, bottom) {
-  write(`${ESC}${top};${bottom}r`);
-}
-
+/**
+ * Minimal console renderer:
+ * - Top line status (white bg)
+ * - Middle scrolling log region
+ * - Bottom input line (managed by input module)
+ */
 export function createTerm() {
-  let statusLine = "";
-  let inAlt = false;
+  const out = process.stdout;
 
-  function renderStatus() {
-    if (!statusLine) return;
-    cursorTo(1, 1);
-    clearLine();
-    write(statusLine);
-  }
+  let cols = out.columns || 120;
+  let rows = out.rows || 30;
 
-  function logLine(msg) {
-    const rows = process.stdout.rows || 24;
-    const logRow = Math.max(2, rows - 1);
-    cursorTo(logRow, 1);
-    clearLine();
-    write(`${msg}\n`);
-    renderStatus();
+  function setScrollRegion() {
+    cols = out.columns || cols;
+    rows = out.rows || rows;
+    const logTop = 2;
+    const logBottom = Math.max(2, rows - 1);
+    out.write(`\x1b[${logTop};${logBottom}r`);
   }
 
   function enter() {
-    inAlt = true;
-    write(`${ESC}?1049h`);
-    write(`${ESC}?25l`);
-    write(`${ESC}2J`);
-    const rows = process.stdout.rows || 24;
-    setScrollRegion(2, Math.max(2, rows - 1));
-    cursorTo(1, 1);
-    clearLine();
+    out.write(ansiEscapes.enterAlternativeScreen);
+    out.write(ansiEscapes.cursorHide);
+    out.write(ansiEscapes.clearScreen);
+    setScrollRegion();
+    out.write(ansiEscapes.cursorTo(0, Math.max(1, rows - 2)));
   }
 
   function exit() {
-    if (inAlt) {
-      write(`${ESC}r`);
-      write(`${ESC}?25h`);
-      write(`${ESC}?1049l`);
-      inAlt = false;
-    }
+    out.write("\x1b[r"); // reset scroll region
+    out.write(ansiEscapes.cursorShow);
+    out.write(ansiEscapes.exitAlternativeScreen);
   }
 
   function writeStatus(line) {
-    statusLine = line;
-    renderStatus();
+    cols = out.columns || cols;
+    out.write(ansiEscapes.cursorSavePosition);
+    out.write(ansiEscapes.cursorTo(0, 0));
+    out.write("\x1b[47m\x1b[30m"); // bg white, fg black
+    out.write(String(line).padEnd(cols).slice(0, cols));
+    out.write("\x1b[0m");
+    out.write(ansiEscapes.cursorRestorePosition);
   }
 
-  return {
-    enter,
-    exit,
-    writeStatus,
-    logLine,
-  };
+  function renderInput(prompt, buffer) {
+    cols = out.columns || cols;
+    rows = out.rows || rows;
+    out.write(ansiEscapes.cursorSavePosition);
+    out.write(ansiEscapes.cursorTo(0, rows - 1));
+    out.write(ansiEscapes.eraseLine);
+    const s = `${prompt}${buffer}`;
+    out.write(s.slice(0, cols - 1));
+    out.write(ansiEscapes.cursorRestorePosition);
+  }
+
+  function logLine(msg) {
+    rows = out.rows || rows;
+    const logRow = Math.max(1, rows - 2);
+    out.write(ansiEscapes.cursorSavePosition);
+    out.write(ansiEscapes.cursorTo(0, logRow));
+    out.write(ansiEscapes.eraseLine);
+    out.write(String(msg) + "\n"); // scroll in region
+    out.write(ansiEscapes.cursorRestorePosition);
+  }
+
+  out.on("resize", setScrollRegion);
+
+  return { enter, exit, writeStatus, logLine, renderInput };
 }
