@@ -1,4 +1,4 @@
-# HamWatch (console)
+# RidGuard (console)
 
 Plain console app:
 - White status bar on top line
